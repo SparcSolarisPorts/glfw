@@ -27,7 +27,15 @@ endif()
 cmake_dependent_option(GLFW_BUILD_WIN32 "Build support for Win32" ON "WIN32" OFF)
 cmake_dependent_option(GLFW_BUILD_COCOA "Build support for Cocoa" ON "APPLE" OFF)
 cmake_dependent_option(GLFW_BUILD_X11 "Build support for X11" ON "UNIX;NOT APPLE" OFF)
-cmake_dependent_option(GLFW_BUILD_WAYLAND "Build support for Wayland" ON "UNIX;NOT APPLE" OFF)
+# Solaris and illumos both identify as SunOS.  X11 is the established
+# desktop backend there; Wayland remains available as an explicit opt-in.
+if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+    set(GLFW_WAYLAND_DEFAULT OFF)
+else()
+    set(GLFW_WAYLAND_DEFAULT ON)
+endif()
+cmake_dependent_option(GLFW_BUILD_WAYLAND "Build support for Wayland" ${GLFW_WAYLAND_DEFAULT} "UNIX;NOT APPLE" OFF)
+unset(GLFW_WAYLAND_DEFAULT)
 
 cmake_dependent_option(GLFW_USE_HYBRID_HPG "Force use of high-performance GPU on hybrid systems" OFF
                        "WIN32" OFF)
@@ -44,6 +52,107 @@ else()
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${GLFW_SOURCE_DIR}/CMake/modules")
+
+# SunOS uses ISA-specific 64-bit library directories (sparcv9, amd64, etc.).
+# Probe the running build host instead of treating SunOS like Linux.  Solaris
+# and illumos share this ABI convention.
+if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+    set(_GLFW_SUNOS_ISA "")
+
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+        find_program(_GLFW_SUNOS_ISAINFO NAMES isainfo PATHS /usr/bin /bin)
+        if (_GLFW_SUNOS_ISAINFO)
+            execute_process(COMMAND "${_GLFW_SUNOS_ISAINFO}" -k
+                            OUTPUT_VARIABLE _GLFW_SUNOS_ISA
+                            OUTPUT_STRIP_TRAILING_WHITESPACE
+                            ERROR_QUIET)
+        endif()
+
+        if (NOT _GLFW_SUNOS_ISA)
+            string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _GLFW_SUNOS_PROCESSOR)
+            if (_GLFW_SUNOS_PROCESSOR MATCHES "sparcv9|sparc64|sparc")
+                set(_GLFW_SUNOS_ISA "sparcv9")
+            elseif (_GLFW_SUNOS_PROCESSOR MATCHES "amd64|x86_64")
+                set(_GLFW_SUNOS_ISA "amd64")
+            elseif (_GLFW_SUNOS_PROCESSOR MATCHES "aarch64|arm64")
+                foreach(_candidate aarch64 arm64 64)
+                    if (IS_DIRECTORY "/usr/lib/${_candidate}")
+                        set(_GLFW_SUNOS_ISA "${_candidate}")
+                        break()
+                    endif()
+                endforeach()
+            endif()
+        endif()
+    endif()
+
+    # Keep 64-bit ISA directories ahead of unsuffixed /usr/lib.  Solaris
+    # packages 32-bit objects in /usr/lib and 64-bit objects in /usr/lib/amd64
+    # or /usr/lib/sparcv9, so reversing this order can make CMake inspect the
+    # wrong ELF class first.
+    set(_GLFW_SUNOS_LIBRARY_DIRS "")
+    set(_GLFW_SUNOS_PKGCONFIG_DIRS "")
+
+    if (_GLFW_SUNOS_ISA)
+        list(APPEND _GLFW_SUNOS_LIBRARY_DIRS
+             "/usr/lib/${_GLFW_SUNOS_ISA}"
+             "/usr/lib/GL/${_GLFW_SUNOS_ISA}"
+             "/usr/lib/mesa/${_GLFW_SUNOS_ISA}"
+             "/usr/X11/lib/${_GLFW_SUNOS_ISA}"
+             "/usr/openwin/lib/${_GLFW_SUNOS_ISA}")
+        list(APPEND _GLFW_SUNOS_PKGCONFIG_DIRS
+             "/usr/lib/${_GLFW_SUNOS_ISA}/pkgconfig")
+    endif()
+
+    list(APPEND _GLFW_SUNOS_LIBRARY_DIRS
+         /usr/lib
+         /usr/lib/GL
+         /usr/lib/mesa
+         /usr/lib/X11
+         /usr/X11/lib
+         /usr/openwin/lib)
+    list(APPEND _GLFW_SUNOS_PKGCONFIG_DIRS /usr/lib/pkgconfig)
+
+    set(_GLFW_SUNOS_FOUND_LIBRARY_DIRS "")
+    foreach(_dir IN LISTS _GLFW_SUNOS_LIBRARY_DIRS)
+        if (IS_DIRECTORY "${_dir}")
+            list(APPEND _GLFW_SUNOS_FOUND_LIBRARY_DIRS "${_dir}")
+        endif()
+    endforeach()
+    if (_GLFW_SUNOS_FOUND_LIBRARY_DIRS)
+        # Prepend the complete ordered list once.  Repeated PREPEND operations
+        # would reverse the order and put 32-bit /usr/lib ahead of sparcv9.
+        list(PREPEND CMAKE_LIBRARY_PATH ${_GLFW_SUNOS_FOUND_LIBRARY_DIRS})
+    endif()
+
+    # X11 headers are in /usr/include/X11.  Mesa's implementation headers are
+    # in /usr/include/mesa with selected public GL/EGL links under /usr/include.
+    set(_GLFW_SUNOS_FOUND_INCLUDE_DIRS "")
+    foreach(_dir /usr/include /usr/include/mesa /usr/include/X11)
+        if (IS_DIRECTORY "${_dir}")
+            list(APPEND _GLFW_SUNOS_FOUND_INCLUDE_DIRS "${_dir}")
+        endif()
+    endforeach()
+    if (_GLFW_SUNOS_FOUND_INCLUDE_DIRS)
+        list(PREPEND CMAKE_INCLUDE_PATH ${_GLFW_SUNOS_FOUND_INCLUDE_DIRS})
+    endif()
+
+    set(_GLFW_SUNOS_PC_PATHS "")
+    foreach(_dir IN LISTS _GLFW_SUNOS_PKGCONFIG_DIRS)
+        if (IS_DIRECTORY "${_dir}")
+            list(APPEND _GLFW_SUNOS_PC_PATHS "${_dir}")
+        endif()
+    endforeach()
+    if (_GLFW_SUNOS_PC_PATHS)
+        string(JOIN ":" _GLFW_SUNOS_PC_PATH ${_GLFW_SUNOS_PC_PATHS})
+        if (DEFINED ENV{PKG_CONFIG_PATH} AND NOT "$ENV{PKG_CONFIG_PATH}" STREQUAL "")
+            set(ENV{PKG_CONFIG_PATH} "${_GLFW_SUNOS_PC_PATH}:$ENV{PKG_CONFIG_PATH}")
+        else()
+            set(ENV{PKG_CONFIG_PATH} "${_GLFW_SUNOS_PC_PATH}")
+        endif()
+    endif()
+
+    message(STATUS "SunOS ISA library suffix: ${_GLFW_SUNOS_ISA}")
+endif()
 
 find_package(Threads REQUIRED)
 

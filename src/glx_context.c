@@ -259,6 +259,11 @@ GLFWbool _glfwInitGLX(void)
         _GLFW_GLX_LIBRARY,
 #elif defined(__CYGWIN__)
         "libGL-1.so",
+#elif defined(__sun)
+        // Solaris Mesa exposes GLX through libGL.so.1; libGLX.so.0 is not
+        // part of the traditional Solaris OpenGL selection layout.
+        "libGL.so.1",
+        "libGL.so",
 #elif defined(__OpenBSD__) || defined(__NetBSD__)
         "libGL.so",
 #else

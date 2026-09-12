@@ -138,6 +138,12 @@ target_include_directories(glfw PRIVATE
                            "${GLFW_BINARY_DIR}/src")
 target_link_libraries(glfw PRIVATE Threads::Threads)
 
+# Solaris and illumos share the SunOS ABI.  GLFW is strict C99, so request
+# the normal POSIX/XSI interfaces exposed by the SunOS system headers.
+if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
+    target_compile_definitions(glfw PRIVATE __EXTENSIONS__ _REENTRANT _POSIX_PTHREAD_SEMANTICS _POSIX_C_SOURCE=200809L)
+endif()
+
 if (GLFW_BUILD_WIN32)
     list(APPEND glfw_PKG_LIBS "-lgdi32")
 endif()

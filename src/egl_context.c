@@ -397,6 +397,9 @@ GLFWbool _glfwInitEGL(void)
         "libEGL.dylib",
 #elif defined(__CYGWIN__)
         "libEGL-1.so",
+#elif defined(__sun)
+        "libEGL.so.1",
+        "libEGL.so",
 #elif defined(__OpenBSD__) || defined(__NetBSD__)
         "libEGL.so",
 #else
